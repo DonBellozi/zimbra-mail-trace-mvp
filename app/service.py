@@ -24,12 +24,13 @@ def human_status(attempt: DeliveryAttempt) -> str:
 def search(
     session: Session,
     query: str,
-    limit: int = 100,
+    page: int = 1,
+    page_size: int = 50,
     date_from: datetime | None = None,
     date_to_exclusive: datetime | None = None,
     sender: str | None = None,
     recipient: str | None = None,
-) -> list[dict]:
+) -> dict:
     like = f"%{query.strip()}%"
     filters = [or_(
         DeliveryAttempt.recipient.ilike(like), DeliveryAttempt.original_recipient.ilike(like),
@@ -50,8 +51,9 @@ def search(
         .outerjoin(QueueEntry, QueueEntry.queue_id == DeliveryAttempt.queue_id)
         .where(*filters)
         .order_by(DeliveryAttempt.occurred_at.desc(), DeliveryAttempt.id.desc())
-        # Read extra technical stages, then collapse them into logical results.
-        .limit(min(max(limit * 20, 500), 10_000))
+        # Technical hops are collapsed below. The safety ceiling prevents an
+        # unbounded request; ordinary investigations remain fully pageable.
+        .limit(50_000)
     )
     rows = list(session.execute(stmt))
     queue_ids = {attempt.queue_id for attempt, _ in rows}
@@ -110,7 +112,18 @@ def search(
         collapsed.append(row)
     for row in collapsed:
         row.pop("_occurred_at", None)
-    return collapsed[:min(limit, 500)]
+    total = len(collapsed)
+    page_size = min(max(page_size, 1), 100)
+    page = max(page, 1)
+    start = (page - 1) * page_size
+    return {
+        "items": collapsed[start:start + page_size],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "has_previous": page > 1,
+        "has_next": start + page_size < total,
+    }
 
 
 def trace(session: Session, queue_id: str) -> dict:
