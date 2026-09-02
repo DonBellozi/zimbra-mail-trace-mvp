@@ -84,7 +84,7 @@ def search(
             "sender": queue.envelope_from if queue else None, "recipient": attempt.recipient,
             "original_recipient": attempt.original_recipient, "time": attempt.occurred_at.isoformat(),
             "status": human_status(attempt), "technical_status": attempt.status, "dsn": attempt.dsn,
-            "reply": attempt.reply, "relay": attempt.relay,
+            "reply": attempt.reply, "relay": attempt.relay, "_occurred_at": attempt.occurred_at,
         }
         # Rows arrive newest-first. The first event for this message/recipient is
         # its current status; older queued-as stages remain available in trace().
@@ -92,7 +92,31 @@ def search(
             grouped[key] = row
         elif not grouped[key].get("sender") and row.get("sender"):
             grouped[key]["sender"] = row["sender"]
-    return list(grouped.values())[:min(limit, 500)]
+    results = list(grouped.values())
+
+    # Some installations do not log enough Queue-ID links across every content
+    # filter. In that case, pair a queued-as hand-off with the nearest subsequent
+    # terminal delivery for the same sender and recipient. The short window keeps
+    # genuinely separate messages distinct while collapsing their technical hop.
+    terminal = [row for row in results if row["status"] in {"delivered", "failed"}]
+    collapsed = []
+    for row in results:
+        is_handoff = row["status"] == "sent" and "queued as" in (row.get("reply") or "").lower()
+        if is_handoff:
+            sender = (row.get("sender") or "").lower()
+            recipient = (row.get("original_recipient") or row.get("recipient") or "").lower()
+            matched = any(
+                (candidate.get("sender") or "").lower() == sender
+                and (candidate.get("original_recipient") or candidate.get("recipient") or "").lower() == recipient
+                and 0 <= (candidate["_occurred_at"] - row["_occurred_at"]).total_seconds() <= 120
+                for candidate in terminal
+            )
+            if matched:
+                continue
+        collapsed.append(row)
+    for row in collapsed:
+        row.pop("_occurred_at", None)
+    return collapsed[:min(limit, 500)]
 
 
 def trace(session: Session, queue_id: str) -> dict:
