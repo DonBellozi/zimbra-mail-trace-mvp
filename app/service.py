@@ -42,18 +42,29 @@ def search(
         select(DeliveryAttempt, QueueEntry)
         .outerjoin(QueueEntry, QueueEntry.queue_id == DeliveryAttempt.queue_id)
         .where(*filters)
-        .order_by(DeliveryAttempt.occurred_at.desc()).limit(min(limit, 500))
+        .order_by(DeliveryAttempt.occurred_at.desc(), DeliveryAttempt.id.desc())
+        # Read extra technical stages, then collapse them into logical results.
+        .limit(min(max(limit * 20, 500), 10_000))
     )
-    result = []
+    grouped: dict[tuple[str, str], dict] = {}
     for attempt, queue in session.execute(stmt):
-        result.append({
+        message_key = queue.message_id if queue and queue.message_id else attempt.queue_id
+        recipient_key = (attempt.original_recipient or attempt.recipient or "").lower()
+        key = (message_key, recipient_key)
+        row = {
             "queue_id": attempt.queue_id, "message_id": queue.message_id if queue else None,
             "sender": queue.envelope_from if queue else None, "recipient": attempt.recipient,
             "original_recipient": attempt.original_recipient, "time": attempt.occurred_at.isoformat(),
             "status": human_status(attempt), "technical_status": attempt.status, "dsn": attempt.dsn,
             "reply": attempt.reply, "relay": attempt.relay,
-        })
-    return result
+        }
+        # Rows arrive newest-first. The first event for this message/recipient is
+        # its current status; older queued-as stages remain available in trace().
+        if key not in grouped:
+            grouped[key] = row
+        elif not grouped[key].get("sender") and row.get("sender"):
+            grouped[key]["sender"] = row["sender"]
+    return list(grouped.values())[:min(limit, 500)]
 
 
 def trace(session: Session, queue_id: str) -> dict:
