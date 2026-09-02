@@ -21,16 +21,27 @@ def human_status(attempt: DeliveryAttempt) -> str:
     return attempt.status or "unknown"
 
 
-def search(session: Session, query: str, limit: int = 100) -> list[dict]:
+def search(
+    session: Session,
+    query: str,
+    limit: int = 100,
+    date_from: datetime | None = None,
+    date_to_exclusive: datetime | None = None,
+) -> list[dict]:
     like = f"%{query.strip()}%"
+    filters = [or_(
+        DeliveryAttempt.recipient.ilike(like), DeliveryAttempt.original_recipient.ilike(like),
+        QueueEntry.envelope_from.ilike(like), QueueEntry.message_id.ilike(like),
+        QueueEntry.queue_id.ilike(like), QueueEntry.sasl_username.ilike(like), QueueEntry.client_ip.ilike(like),
+    )]
+    if date_from:
+        filters.append(DeliveryAttempt.occurred_at >= date_from)
+    if date_to_exclusive:
+        filters.append(DeliveryAttempt.occurred_at < date_to_exclusive)
     stmt = (
         select(DeliveryAttempt, QueueEntry)
         .outerjoin(QueueEntry, QueueEntry.queue_id == DeliveryAttempt.queue_id)
-        .where(or_(
-            DeliveryAttempt.recipient.ilike(like), DeliveryAttempt.original_recipient.ilike(like),
-            QueueEntry.envelope_from.ilike(like), QueueEntry.message_id.ilike(like),
-            QueueEntry.queue_id.ilike(like), QueueEntry.sasl_username.ilike(like), QueueEntry.client_ip.ilike(like),
-        ))
+        .where(*filters)
         .order_by(DeliveryAttempt.occurred_at.desc()).limit(min(limit, 500))
     )
     result = []
