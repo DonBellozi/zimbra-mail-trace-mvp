@@ -27,6 +27,8 @@ def search(
     limit: int = 100,
     date_from: datetime | None = None,
     date_to_exclusive: datetime | None = None,
+    sender: str | None = None,
+    recipient: str | None = None,
 ) -> list[dict]:
     like = f"%{query.strip()}%"
     filters = [or_(
@@ -38,6 +40,11 @@ def search(
         filters.append(DeliveryAttempt.occurred_at >= date_from)
     if date_to_exclusive:
         filters.append(DeliveryAttempt.occurred_at < date_to_exclusive)
+    if sender and sender.strip():
+        filters.append(QueueEntry.envelope_from.ilike(f"%{sender.strip()}%"))
+    if recipient and recipient.strip():
+        recipient_like = f"%{recipient.strip()}%"
+        filters.append(or_(DeliveryAttempt.recipient.ilike(recipient_like), DeliveryAttempt.original_recipient.ilike(recipient_like)))
     stmt = (
         select(DeliveryAttempt, QueueEntry)
         .outerjoin(QueueEntry, QueueEntry.queue_id == DeliveryAttempt.queue_id)
@@ -94,25 +101,12 @@ def search(
             grouped[key]["sender"] = row["sender"]
     results = list(grouped.values())
 
-    # Some installations do not log enough Queue-ID links across every content
-    # filter. In that case, pair a queued-as hand-off with the nearest subsequent
-    # terminal delivery for the same sender and recipient. The short window keeps
-    # genuinely separate messages distinct while collapsing their technical hop.
-    terminal = [row for row in results if row["status"] in {"delivered", "failed"}]
+    # "queued as" confirms only an internal hand-off. It is not a final result.
     collapsed = []
     for row in results:
         is_handoff = row["status"] == "sent" and "queued as" in (row.get("reply") or "").lower()
         if is_handoff:
-            sender = (row.get("sender") or "").lower()
-            recipient = (row.get("original_recipient") or row.get("recipient") or "").lower()
-            matched = any(
-                (candidate.get("sender") or "").lower() == sender
-                and (candidate.get("original_recipient") or candidate.get("recipient") or "").lower() == recipient
-                and 0 <= (candidate["_occurred_at"] - row["_occurred_at"]).total_seconds() <= 120
-                for candidate in terminal
-            )
-            if matched:
-                continue
+            continue
         collapsed.append(row)
     for row in collapsed:
         row.pop("_occurred_at", None)

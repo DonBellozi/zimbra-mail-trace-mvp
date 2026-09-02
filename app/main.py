@@ -266,14 +266,18 @@ def run_collector(request: Request) -> dict:
 
 
 @app.get("/api/search")
-def api_search(request: Request, q: str, limit: int = 100, date_from: date | None = None, date_to: date | None = None) -> list[dict]:
+def api_search(
+    request: Request, q: str = "", limit: int = 100,
+    date_from: date | None = None, date_to: date | None = None,
+    sender: str | None = None, recipient: str | None = None,
+) -> list[dict]:
     config = require_auth(request)
     if date_from and date_to and date_from > date_to:
         raise HTTPException(400, "Начальная дата не может быть позже конечной")
     start = datetime.combine(date_from, datetime_time.min) if date_from else None
     end = datetime.combine(date_to + timedelta(days=1), datetime_time.min) if date_to else None
     with next(db.session(config["database_url"])) as session:
-        return search(session, q, limit, start, end)
+        return search(session, q, limit, start, end, sender, recipient)
 
 
 @app.get("/api/trace/{queue_id}")
