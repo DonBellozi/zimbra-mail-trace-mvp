@@ -141,10 +141,15 @@ class SSHSource:
             for attr in sorted(attrs, key=lambda a: a.st_mtime):
                 path = posixpath.join(directory, attr.filename)
                 with sftp.open(path, "rb") as probe:
-                    fingerprint = hashlib.sha256(probe.read(4096)).hexdigest()
+                    # The first complete log line stays stable while mail.log
+                    # grows; hashing the first 4 KiB caused its identity to
+                    # change repeatedly during the first writes.
+                    fingerprint = hashlib.sha256(probe.readline(4096)).hexdigest()
                 checkpoint = session.scalar(select(IngestCheckpoint).where(IngestCheckpoint.source == fingerprint))
                 compressed = path.endswith(".gz")
-                if compressed and checkpoint:
+                # Any rotation is immutable for our purposes and is read once,
+                # including the commonly uncompressed mail.log.1.
+                if checkpoint and path != base:
                     continue
                 offset = checkpoint.byte_offset if checkpoint and path == base else 0
                 if not compressed and offset > attr.st_size:

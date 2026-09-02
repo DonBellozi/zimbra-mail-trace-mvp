@@ -316,6 +316,12 @@ def run_collector(request: Request) -> dict:
         raise HTTPException(400, str(exc)) from exc
 
 
+@app.get("/api/collector/status")
+def get_collector_status(request: Request) -> dict:
+    require_auth(request)
+    return collector_state
+
+
 @app.post("/api/collector/reindex")
 def reindex_collector(request: Request) -> dict:
     config = require_auth(request)
