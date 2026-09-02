@@ -12,6 +12,7 @@ dependencies = [
   "cryptography==45.0.6",
   "argon2-cffi==25.1.0",
   "python-multipart==0.0.20",
+  "tzdata==2025.2",
 ]
 
 [project.optional-dependencies]
@@ -20,4 +21,3 @@ test = ["pytest==8.4.1"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-

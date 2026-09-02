@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager, suppress
 from datetime import date, datetime, time as datetime_time, timedelta
 from pathlib import Path
 from threading import Lock
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from argon2 import PasswordHasher
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -79,6 +80,11 @@ class SetupRequest(BaseModel):
     mail_log_path: str = "/var/log/mail.log"
     zimbra_log_path: str = "/var/log/zimbra.log"
     local_domains: list[str] = []
+    lmtp_host: str | None = None
+    lmtp_port: int = 7025
+    smtp_relay_enabled: bool = False
+    smtp_relay_host: str | None = None
+    smtp_relay_port: int = 25
     timezone: str = "Europe/Moscow"
     retention_days: int = 365
     poll_seconds: int = 10
@@ -103,8 +109,27 @@ class SSHSettings(BaseModel):
     mail_log_path: str = "/var/log/mail.log"
 
 
+class GeneralSettings(BaseModel):
+    zimbra_log_path: str = "/var/log/zimbra.log"
+    local_domains: list[str] = []
+    lmtp_host: str | None = None
+    lmtp_port: int = 7025
+    smtp_relay_enabled: bool = False
+    smtp_relay_host: str | None = None
+    smtp_relay_port: int = 25
+    timezone: str = "Europe/Moscow"
+    retention_days: int = Field(default=365, ge=1, le=3650)
+    poll_seconds: int = Field(default=10, ge=5, le=3600)
+
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=10)
+
+
 class MigrationRequest(BaseModel):
-    target_database_url: str
+    target_mode: str = "external"
+    target_database_url: str | None = None
     copy_data: bool = True
     allow_nonempty: bool = False
 
@@ -256,6 +281,30 @@ def update_ssh(payload: SSHSettings, request: Request) -> dict:
     return result
 
 
+@app.put("/api/settings/general")
+def update_general(payload: GeneralSettings, request: Request) -> dict:
+    require_auth(request)
+    try:
+        ZoneInfo(payload.timezone)
+    except ZoneInfoNotFoundError as exc:
+        raise HTTPException(400, "Неизвестный часовой пояс") from exc
+    if payload.smtp_relay_enabled and not payload.smtp_relay_host:
+        raise HTTPException(400, "Укажите адрес SMTP-реле")
+    store.save(payload.model_dump())
+    return {"ok": True}
+
+
+@app.put("/api/settings/password")
+def change_password(payload: PasswordChange, request: Request) -> dict:
+    config = require_auth(request)
+    try:
+        hasher.verify(config["admin_password_hash"], payload.current_password)
+    except Exception as exc:
+        raise HTTPException(400, "Текущий пароль неверен") from exc
+    store.save({"admin_password_hash": hasher.hash(payload.new_password), "session_secret": os.urandom(32).hex()})
+    return {"ok": True}
+
+
 @app.post("/api/collector/run")
 def run_collector(request: Request) -> dict:
     config = require_auth(request)
@@ -292,10 +341,15 @@ def api_trace(queue_id: str, request: Request) -> dict:
 def migrate_database(payload: MigrationRequest, request: Request) -> dict:
     config = require_auth(request)
     try:
-        db.test(payload.target_database_url)
-        result = db.migrate(config["database_url"], payload.target_database_url, payload.allow_nonempty) if payload.copy_data else {"ok": True, "copied": {}}
-        db.connect(payload.target_database_url)
-        store.save({"database_url": payload.target_database_url, "db_mode": "external"})
+        if payload.target_mode not in {"bundled", "external"}:
+            raise ValueError("Неизвестный режим PostgreSQL")
+        target_url = os.getenv("BUNDLED_DATABASE_URL") if payload.target_mode == "bundled" else payload.target_database_url
+        if not target_url:
+            raise ValueError("Не указан адрес PostgreSQL")
+        db.test(target_url)
+        result = db.migrate(config["database_url"], target_url, payload.allow_nonempty) if payload.copy_data else {"ok": True, "copied": {}}
+        db.connect(target_url)
+        store.save({"database_url": target_url, "db_mode": payload.target_mode})
         return result
     except Exception as exc:
         raise HTTPException(400, f"Перенос отменён, старая база остаётся активной: {exc}") from exc
