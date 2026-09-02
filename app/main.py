@@ -8,6 +8,7 @@ import os
 import time
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
+from threading import Lock
 
 from argon2 import PasswordHasher
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -25,12 +26,9 @@ async def collector_loop() -> None:
         delay = max(int(config.get("poll_seconds", 10)), 5)
         if config.get("configured") and config.get("database_url"):
             try:
-                def run() -> None:
-                    with next(db.session(config["database_url"])) as session:
-                        SSHSource(config).sync(session)
-                await asyncio.to_thread(run)
+                await asyncio.to_thread(collect_once, config)
             except Exception:
-                pass
+                pass  # The error is exposed in the authenticated status endpoint.
         await asyncio.sleep(delay)
 
 
@@ -46,6 +44,24 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="Zimbra Mail Trace", version="0.1.0", lifespan=lifespan)
 hasher = PasswordHasher()
 STATIC = Path(__file__).parent / "static"
+collector_lock = Lock()
+collector_state = {"status": "idle", "last_run": None, "last_success": None, "last_error": None, "result": None}
+
+
+def collect_once(config: dict) -> dict:
+    if not collector_lock.acquire(blocking=False):
+        return {"running": True}
+    collector_state.update(status="running", last_run=int(time.time()), last_error=None)
+    try:
+        with next(db.session(config["database_url"])) as session:
+            result = SSHSource(config).sync(session)
+        collector_state.update(status="idle", last_success=int(time.time()), result=result)
+        return result
+    except Exception as exc:
+        collector_state.update(status="error", last_error=str(exc))
+        raise
+    finally:
+        collector_lock.release()
 
 
 class SetupRequest(BaseModel):
@@ -55,8 +71,10 @@ class SetupRequest(BaseModel):
     ssh_host: str
     ssh_port: int = 22
     ssh_user: str
+    ssh_auth_method: str = "password"
     ssh_password: str | None = None
     ssh_private_key: str | None = None
+    ssh_key_passphrase: str | None = None
     mail_log_path: str = "/var/log/mail.log"
     zimbra_log_path: str = "/var/log/zimbra.log"
     local_domains: list[str] = []
@@ -71,6 +89,17 @@ class DatabaseTest(BaseModel):
 
 class LoginRequest(BaseModel):
     password: str
+
+
+class SSHSettings(BaseModel):
+    ssh_host: str
+    ssh_port: int = 22
+    ssh_user: str
+    ssh_auth_method: str
+    ssh_password: str | None = None
+    ssh_private_key: str | None = None
+    ssh_key_passphrase: str | None = None
+    mail_log_path: str = "/var/log/mail.log"
 
 
 class MigrationRequest(BaseModel):
@@ -127,6 +156,7 @@ def state(request: Request) -> dict:
         response["config"] = {}
     if is_authenticated and config.get("database_url"):
         response["config"] = store.public(config)
+        response["collector"] = collector_state
         try:
             with next(db.session(config["database_url"])) as session:
                 response["stats"] = stats(session)
@@ -144,12 +174,26 @@ def setup(payload: SetupRequest) -> dict:
     database_url = os.getenv("BUNDLED_DATABASE_URL") if payload.db_mode == "bundled" else payload.database_url
     if not database_url:
         raise HTTPException(400, "Не указан адрес PostgreSQL")
+    if payload.ssh_auth_method not in {"password", "key"}:
+        raise HTTPException(400, "Неизвестный способ SSH-аутентификации")
+    if payload.ssh_auth_method == "password" and not payload.ssh_password:
+        raise HTTPException(400, "Введите SSH-пароль")
+    if payload.ssh_auth_method == "key" and not payload.ssh_private_key:
+        raise HTTPException(400, "Вставьте приватный SSH-ключ")
     try:
         db.test(database_url)
     except Exception as exc:
         raise HTTPException(400, f"PostgreSQL недоступен: {exc}") from exc
     config = payload.model_dump(exclude={"admin_password"})
-    config.update(configured=True, database_url=database_url, admin_password_hash=hasher.hash(payload.admin_password), host_key_policy="reject")
+    if payload.ssh_auth_method == "password":
+        config.update(ssh_private_key=None, ssh_key_passphrase=None)
+    else:
+        config["ssh_password"] = None
+    config.update(configured=True, database_url=database_url, admin_password_hash=hasher.hash(payload.admin_password), host_key_policy="accept-new")
+    try:
+        SSHSource(config).test()
+    except Exception as exc:
+        raise HTTPException(400, f"SSH к Zimbra недоступен: {exc}") from exc
     store.save(config)
     db.connect(database_url)
     return {"ok": True}
@@ -189,12 +233,33 @@ def test_ssh(request: Request) -> dict:
         raise HTTPException(400, str(exc)) from exc
 
 
+@app.put("/api/settings/ssh")
+def update_ssh(payload: SSHSettings, request: Request) -> dict:
+    current = require_auth(request)
+    if payload.ssh_auth_method not in {"password", "key"}:
+        raise HTTPException(400, "Неизвестный способ SSH-аутентификации")
+    candidate = {**current, **payload.model_dump(exclude_none=True), "host_key_policy": "accept-new"}
+    if payload.ssh_auth_method == "password":
+        if not payload.ssh_password and current.get("ssh_auth_method") != "password":
+            raise HTTPException(400, "Введите SSH-пароль")
+        candidate.update(ssh_private_key=None, ssh_key_passphrase=None)
+    else:
+        if not payload.ssh_private_key and current.get("ssh_auth_method") != "key":
+            raise HTTPException(400, "Вставьте приватный SSH-ключ")
+        candidate["ssh_password"] = None
+    try:
+        result = SSHSource(candidate).test()
+    except Exception as exc:
+        raise HTTPException(400, f"Настройки не сохранены: {exc}") from exc
+    store.save(candidate)
+    return result
+
+
 @app.post("/api/collector/run")
 def run_collector(request: Request) -> dict:
     config = require_auth(request)
     try:
-        with next(db.session(config["database_url"])) as session:
-            return SSHSource(config).sync(session)
+        return collect_once(config)
     except Exception as exc:
         raise HTTPException(400, str(exc)) from exc
 

@@ -83,8 +83,10 @@ class SSHSource:
     def _connect(self) -> paramiko.SSHClient:
         client = paramiko.SSHClient()
         client.load_system_host_keys()
-        policy = self.config.get("host_key_policy", "reject")
-        if policy == "accept-new":
+        policy = self.config.get("host_key_policy", "accept-new")
+        # Legacy 0.1 configs used "reject" without providing a known_hosts file,
+        # which made every fresh container unable to connect.
+        if policy == "accept-new" or not self.config.get("known_hosts_path"):
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         kwargs = dict(hostname=self.config["ssh_host"], port=int(self.config.get("ssh_port", 22)), username=self.config["ssh_user"], timeout=15)
         if self.config.get("ssh_private_key"):

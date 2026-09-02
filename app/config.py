@@ -31,7 +31,7 @@ class ConfigStore:
             if not self.path.exists():
                 return {"configured": False, "session_secret": secrets.token_urlsafe(32)}
             payload = json.loads(self.path.read_text(encoding="utf-8"))
-            for key in ("database_url", "ssh_password", "ssh_private_key"):
+            for key in ("database_url", "ssh_password", "ssh_private_key", "ssh_key_passphrase"):
                 if payload.get(key):
                     payload[key] = self._fernet().decrypt(payload[key].encode()).decode()
             return payload
@@ -42,7 +42,7 @@ class ConfigStore:
             merged = {**current, **config}
             merged.setdefault("session_secret", secrets.token_urlsafe(32))
             stored = dict(merged)
-            for key in ("database_url", "ssh_password", "ssh_private_key"):
+            for key in ("database_url", "ssh_password", "ssh_private_key", "ssh_key_passphrase"):
                 if stored.get(key):
                     stored[key] = self._fernet().encrypt(stored[key].encode()).decode()
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -52,7 +52,7 @@ class ConfigStore:
 
     @staticmethod
     def public(config: dict[str, Any]) -> dict[str, Any]:
-        hidden = {"admin_password_hash", "database_url", "ssh_password", "ssh_private_key", "session_secret"}
+        hidden = {"admin_password_hash", "database_url", "ssh_password", "ssh_private_key", "ssh_key_passphrase", "session_secret"}
         result = {k: v for k, v in config.items() if k not in hidden}
         result["has_ssh_password"] = bool(config.get("ssh_password"))
         result["has_ssh_key"] = bool(config.get("ssh_private_key"))
@@ -61,4 +61,3 @@ class ConfigStore:
 
 
 store = ConfigStore()
-
