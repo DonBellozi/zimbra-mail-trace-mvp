@@ -18,7 +18,8 @@ services:
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
-    profiles: ["bundled-db"]
+    deploy:
+      replicas: ${BUNDLED_DB_REPLICAS:-1}
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-mailtrace}
       POSTGRES_USER: ${POSTGRES_USER:-mailtrace}
@@ -34,4 +35,3 @@ services:
 volumes:
   mailtrace-data:
   postgres-data:
-
