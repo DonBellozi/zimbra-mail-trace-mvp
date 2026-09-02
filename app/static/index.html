@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Zimbra Mail Trace</title>
+  <style>
+    :root{font-family:Inter,Segoe UI,sans-serif;color:#eaf1f8;background:#08121d;color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 85% 0,#123d56 0,transparent 32rem),#08121d}main{max-width:1120px;margin:auto;padding:32px 20px}.brand{display:flex;gap:14px;align-items:center;margin-bottom:28px}.logo{width:44px;height:44px;border-radius:13px;background:#23c7a5;display:grid;place-items:center;color:#05231d;font-weight:900}.muted{color:#8da5b8}h1{font-size:22px;margin:0}h2{margin-top:0}.card{background:#0e1d2b;border:1px solid #20384b;border-radius:18px;padding:22px;margin-bottom:18px;box-shadow:0 18px 50px #0003}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px}.wide{grid-column:1/-1}label{display:block;color:#a9becd;font-size:13px;margin-bottom:6px}input,select,textarea,button{font:inherit}input,select,textarea{width:100%;background:#091522;border:1px solid #29465b;color:#fff;border-radius:10px;padding:11px 12px}textarea{min-height:110px}button{border:0;border-radius:10px;padding:11px 18px;background:#23c7a5;color:#06231d;font-weight:700;cursor:pointer}.secondary{background:#173047;color:#d9e8f1}.actions{display:flex;gap:10px;margin-top:18px}.hidden{display:none}.stats{display:flex;gap:12px}.stat{flex:1;background:#102638;border-radius:13px;padding:16px}.stat b{display:block;font-size:25px}.search{display:flex;gap:10px}.search input{font-size:16px}table{width:100%;border-collapse:collapse;margin-top:18px}th,td{text-align:left;border-bottom:1px solid #20384b;padding:12px 8px;font-size:14px}tr[data-id]{cursor:pointer}.pill{display:inline-block;padding:4px 9px;border-radius:99px;background:#20394c}.delivered{background:#164d42;color:#83efcf}.failed{background:#512c35;color:#ffabb8}.queued{background:#57491d;color:#ffe08a}.error{color:#ff9eaa;margin-top:12px}.ok{color:#72e0c3;margin-top:12px}@media(max-width:700px){.grid{grid-template-columns:1fr}.stats{flex-direction:column}.search{flex-direction:column}}
+  </style>
+</head>
+<body><main>
+  <div class="brand"><div class="logo">MT</div><div><h1>Zimbra Mail Trace</h1><div class="muted">Расследование почтовых отправлений</div></div></div>
+  <section id="setup" class="card hidden"><h2>Первоначальная настройка</h2><p class="muted">Подключите базу и Zimbra. Все параметры позже можно изменить.</p>
+    <form id="setupForm" class="grid">
+      <div><label>Пароль администратора</label><input name="admin_password" type="password" minlength="10" required></div>
+      <div><label>PostgreSQL</label><select name="db_mode"><option value="bundled">Встроенная база</option><option value="external">Внешний сервер</option></select></div>
+      <div class="wide" id="dbUrl"><label>Адрес внешней базы</label><input name="database_url" placeholder="postgresql+psycopg://user:password@host:5432/mailtrace"></div>
+      <div><label>Адрес Zimbra</label><input name="ssh_host" required></div><div><label>SSH-порт</label><input name="ssh_port" type="number" value="22"></div>
+      <div><label>SSH-пользователь</label><input name="ssh_user" required></div><div><label>SSH-пароль</label><input name="ssh_password" type="password"></div>
+      <div class="wide"><label>Приватный SSH-ключ (вместо пароля)</label><textarea name="ssh_private_key"></textarea></div>
+      <div><label>Путь к mail.log</label><input name="mail_log_path" value="/var/log/mail.log"></div><div><label>Локальные домены через запятую</label><input name="local_domains"></div>
+      <div><label>Хранение, дней</label><input name="retention_days" type="number" value="365"></div><div><label>Опрос журнала, секунд</label><input name="poll_seconds" type="number" value="10"></div>
+      <div class="wide actions"><button>Сохранить и проверить</button></div>
+    </form><div id="setupMsg"></div>
+  </section>
+  <section id="login" class="card hidden"><h2>Вход администратора</h2><form id="loginForm"><label>Пароль</label><div class="search"><input name="password" type="password" required autofocus><button>Войти</button></div></form><div id="loginMsg"></div></section>
+  <section id="app" class="hidden">
+    <div class="stats"><div class="stat"><span class="muted">Очередей</span><b id="messages">—</b></div><div class="stat"><span class="muted">Попыток доставки</span><b id="attempts">—</b></div><div class="stat"><span class="muted">Отклонений</span><b id="rejections">—</b></div></div>
+    <div class="card" style="margin-top:18px"><h2>Найти письмо</h2><div class="search"><input id="query" placeholder="Адрес, Message-ID, Queue ID, IP или учётная запись"><button id="find">Найти</button></div><div id="searchMsg"></div>
+      <table><thead><tr><th>Время</th><th>Отправитель</th><th>Получатель</th><th>Статус</th><th>Ответ сервера</th></tr></thead><tbody id="results"></tbody></table>
+    </div><div id="trace" class="card hidden"></div>
+  </section>
+</main><script>
+const $=s=>document.querySelector(s), esc=s=>String(s??'—').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function call(url,opts){const r=await fetch(url,opts);const data=await r.json();if(!r.ok)throw new Error(data.detail||'Ошибка');return data}
+async function boot(){const s=await call('/api/state');$('#setup').classList.toggle('hidden',s.configured);$('#login').classList.toggle('hidden',!s.configured||s.authenticated);$('#app').classList.toggle('hidden',!s.authenticated);if(s.stats)for(const k of ['messages','attempts','rejections'])$('#'+k).textContent=s.stats[k].toLocaleString('ru-RU')}
+$('[name=db_mode]').onchange=e=>$('#dbUrl').classList.toggle('hidden',e.target.value==='bundled'); $('[name=db_mode]').onchange({target:$('[name=db_mode]')});
+$('#setupForm').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.target),o=Object.fromEntries(f);o.ssh_port=+o.ssh_port;o.retention_days=+o.retention_days;o.poll_seconds=+o.poll_seconds;o.local_domains=o.local_domains.split(',').map(x=>x.trim()).filter(Boolean);try{$('#setupMsg').className='muted';$('#setupMsg').textContent='Проверяем подключения…';await call('/api/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});location.reload()}catch(x){$('#setupMsg').className='error';$('#setupMsg').textContent=x.message}};
+$('#loginForm').onsubmit=async e=>{e.preventDefault();try{await call('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:new FormData(e.target).get('password')})});location.reload()}catch(x){$('#loginMsg').className='error';$('#loginMsg').textContent=x.message}};
+$('#find').onclick=async()=>{try{const rows=await call('/api/search?q='+encodeURIComponent($('#query').value));$('#results').innerHTML=rows.map(r=>`<tr data-id="${esc(r.queue_id)}"><td>${esc(new Date(r.time).toLocaleString('ru-RU'))}</td><td>${esc(r.sender)}</td><td>${esc(r.recipient)}</td><td><span class="pill ${esc(r.status)}">${esc(r.status)}</span></td><td>${esc(r.reply)}</td></tr>`).join('');document.querySelectorAll('tr[data-id]').forEach(tr=>tr.onclick=()=>showTrace(tr.dataset.id));$('#searchMsg').textContent=rows.length?'': 'Ничего не найдено'}catch(x){$('#searchMsg').className='error';$('#searchMsg').textContent=x.message}};
+$('#query').onkeydown=e=>{if(e.key==='Enter')$('#find').click()};
+async function showTrace(id){const t=await call('/api/trace/'+encodeURIComponent(id)),box=$('#trace');box.classList.remove('hidden');box.innerHTML=`<h2>Цепочка ${esc(id)}</h2><p><b>Queue ID:</b> ${t.queue_ids.map(esc).join(' → ')}</p><p><b>Message-ID:</b> ${t.message_ids.map(esc).join(', ')||'—'}</p><p><b>Отправитель:</b> ${t.senders.map(esc).join(', ')||'—'}</p>`+Object.entries(t.recipients).map(([r,a])=>`<div><h3>${esc(r)}</h3>${a.map(x=>`<p><span class="pill ${esc(x.status)}">${esc(x.status)}</span> ${esc(x.time)} — ${esc(x.reply)}</p>`).join('')}</div>`).join('');box.scrollIntoView({behavior:'smooth'})}
+boot().catch(x=>document.body.innerHTML='<main><div class="error">'+esc(x.message)+'</div></main>');
+</script></body></html>

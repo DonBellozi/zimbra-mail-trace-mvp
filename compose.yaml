@@ -1,0 +1,37 @@
+services:
+  mail-trace:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${MAIL_TRACE_PORT:-8084}:8084"
+    environment:
+      MAILTRACE_CONFIG: /data/config.json
+      MAILTRACE_KEY: /data/master.key
+      BUNDLED_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-mailtrace}:${POSTGRES_PASSWORD:-mailtrace-change-me}@postgres:5432/${POSTGRES_DB:-mailtrace}
+    volumes:
+      - mailtrace-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    profiles: ["bundled-db"]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mailtrace}
+      POSTGRES_USER: ${POSTGRES_USER:-mailtrace}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mailtrace-change-me}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mailtrace} -d ${POSTGRES_DB:-mailtrace}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  mailtrace-data:
+  postgres-data:
+

@@ -1,0 +1,90 @@
+# Environment variables and local configuration
+.env
+.env.*
+!.env.example
+
+# Secrets, certificates and SSH host data
+secrets/
+certs/
+known_hosts
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Runtime data and local databases
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+*.py,cover
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging and build artifacts
+build/
+dist/
+.eggs/
+*.egg-info/
+*.egg
+pip-wheel-metadata/
+
+# PyCharm / IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+
+# Visual Studio Code
+.vscode/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Operating system files
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Temporary and backup files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+*.bak
+
+# Test and type-checking reports
+junit.xml
+tests/
+test-results/
+.pytype/
+
+# Docker local overrides
+docker-compose.override.yml
+compose.override.yml
