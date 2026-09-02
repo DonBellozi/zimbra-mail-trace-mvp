@@ -46,9 +46,37 @@ def search(
         # Read extra technical stages, then collapse them into logical results.
         .limit(min(max(limit * 20, 500), 10_000))
     )
+    rows = list(session.execute(stmt))
+    queue_ids = {attempt.queue_id for attempt, _ in rows}
+
+    # Queue IDs change after DKIM/Amavis and other internal hand-offs. Build
+    # connected components from the explicit "queued as"/bounce relationships;
+    # Message-ID alone is not reliable enough because it may be absent.
+    parent = {queue_id: queue_id for queue_id in queue_ids}
+
+    def find(queue_id: str) -> str:
+        while parent[queue_id] != queue_id:
+            parent[queue_id] = parent[parent[queue_id]]
+            queue_id = parent[queue_id]
+        return queue_id
+
+    def union(left: str, right: str) -> None:
+        left_root, right_root = find(left), find(right)
+        if left_root != right_root:
+            parent[right_root] = left_root
+
+    if queue_ids:
+        links = session.execute(select(QueueLink).where(or_(
+            QueueLink.parent_queue_id.in_(queue_ids),
+            QueueLink.child_queue_id.in_(queue_ids),
+        ))).scalars()
+        for link in links:
+            if link.parent_queue_id in parent and link.child_queue_id in parent:
+                union(link.parent_queue_id, link.child_queue_id)
+
     grouped: dict[tuple[str, str], dict] = {}
-    for attempt, queue in session.execute(stmt):
-        message_key = queue.message_id if queue and queue.message_id else attempt.queue_id
+    for attempt, queue in rows:
+        message_key = find(attempt.queue_id)
         recipient_key = (attempt.original_recipient or attempt.recipient or "").lower()
         key = (message_key, recipient_key)
         row = {
