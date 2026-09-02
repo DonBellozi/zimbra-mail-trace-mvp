@@ -30,6 +30,8 @@ def search(
     date_to_exclusive: datetime | None = None,
     sender: str | None = None,
     recipient: str | None = None,
+    status_filter: str | None = None,
+    response_filter: str | None = None,
 ) -> dict:
     like = f"%{query.strip()}%"
     filters = [or_(
@@ -108,6 +110,10 @@ def search(
     for row in results:
         is_handoff = row["status"] == "sent" and "queued as" in (row.get("reply") or "").lower()
         if is_handoff:
+            continue
+        if status_filter and status_filter != "all" and row["status"] != status_filter:
+            continue
+        if response_filter and response_filter.strip().lower() not in (row.get("reply") or "").lower():
             continue
         collapsed.append(row)
     for row in collapsed:

@@ -270,6 +270,7 @@ def api_search(
     request: Request, q: str = "", page: int = 1, page_size: int = 50,
     date_from: date | None = None, date_to: date | None = None,
     sender: str | None = None, recipient: str | None = None,
+    status: str | None = None, response: str | None = None,
 ) -> dict:
     config = require_auth(request)
     if date_from and date_to and date_from > date_to:
@@ -277,7 +278,7 @@ def api_search(
     start = datetime.combine(date_from, datetime_time.min) if date_from else None
     end = datetime.combine(date_to + timedelta(days=1), datetime_time.min) if date_to else None
     with next(db.session(config["database_url"])) as session:
-        return search(session, q, page, page_size, start, end, sender, recipient)
+        return search(session, q, page, page_size, start, end, sender, recipient, status, response)
 
 
 @app.get("/api/trace/{queue_id}")
