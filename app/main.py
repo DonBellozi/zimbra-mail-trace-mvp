@@ -16,10 +16,12 @@ from argon2 import PasswordHasher
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import delete
 
 from .collector import SSHSource
 from .config import store
 from .database import db
+from .models import IngestCheckpoint
 from .service import search, stats, trace
 
 async def collector_loop() -> None:
@@ -309,6 +311,20 @@ def change_password(payload: PasswordChange, request: Request) -> dict:
 def run_collector(request: Request) -> dict:
     config = require_auth(request)
     try:
+        return collect_once(config)
+    except Exception as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/collector/reindex")
+def reindex_collector(request: Request) -> dict:
+    config = require_auth(request)
+    if collector_lock.locked():
+        raise HTTPException(409, "Дождитесь завершения текущей загрузки")
+    try:
+        with next(db.session(config["database_url"])) as session:
+            session.execute(delete(IngestCheckpoint))
+            session.commit()
         return collect_once(config)
     except Exception as exc:
         raise HTTPException(400, str(exc)) from exc

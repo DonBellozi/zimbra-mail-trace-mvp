@@ -15,6 +15,12 @@ def test_queue_link():
     assert event and event.fields["child_queue_id"] == "B6F8DE0016"
 
 
+def test_message_id_with_hyphenated_field_name():
+    event = parse_line("Sep  2 15:19:41 mail postfix/cleanup[1]: D31DF693C8CD: message-id=<abc.123@domain.ru>", 2026)
+    assert event and event.kind == "message_id"
+    assert event.fields["message-id"] == "abc.123@domain.ru"
+
+
 def test_rejection_without_queue():
     event = parse_line("Sep  2 00:23:05 mail postfix/smtps/smtpd[1]: NOQUEUE: reject: RCPT from post.domain.ru[10.0.10.248]: 550 5.1.1 rejected; from=<noreply@domain.ru> to=<missing@domain.ru> proto=ESMTP helo=<host>", 2026)
     assert event and event.kind == "rejected"
@@ -24,4 +30,3 @@ def test_rejection_without_queue():
 
 def test_unrelated_line_is_ignored():
     assert parse_line("Sep  2 00:00:02 mail slapd[1]: housekeeping", 2026) is None
-

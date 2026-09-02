@@ -154,6 +154,10 @@ def trace(session: Session, queue_id: str) -> dict:
         "root_queue_id": queue_id, "queue_ids": sorted(ids),
         "message_ids": sorted({q.message_id for q in queues if q.message_id}),
         "senders": sorted({q.envelope_from for q in queues if q.envelope_from}),
+        "sources": [
+            {"ip": q.client_ip, "hostname": q.client_name, "sasl_username": q.sasl_username, "queue_id": q.queue_id}
+            for q in queues if q.client_ip and q.client_ip not in {"127.0.0.1", "::1"}
+        ],
         "recipients": recipients,
     }
 

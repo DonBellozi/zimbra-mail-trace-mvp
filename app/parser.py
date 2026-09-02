@@ -7,7 +7,7 @@ from typing import Any
 
 SYSLOG = re.compile(r"^(?P<month>\w{3})\s+(?P<day>\d+)\s+(?P<time>\d\d:\d\d:\d\d)\s+(?P<host>\S+)\s+(?P<program>[^\[]+)\[(?P<pid>\d+)\]:\s+(?P<body>.*)$")
 QUEUE = re.compile(r"^(?P<queue>[A-F0-9]{5,}):\s+(?P<body>.*)$")
-PAIR = re.compile(r"(?P<key>[a-z_]+)=(?:<(?P<angle>[^>]*)>|(?P<plain>[^, ]+))")
+PAIR = re.compile(r"(?P<key>[a-z_-]+)=(?:<(?P<angle>[^>]*)>|(?P<plain>[^, ]+))")
 QUEUED_AS = re.compile(r"queued as (?P<child>[A-F0-9]{5,})", re.I)
 SMTP_REPLY = re.compile(r"\((?P<reply>.*)\)$")
 CLIENT = re.compile(r"(?P<name>[^\s\[]+)\[(?P<ip>[^\]]+)\]")
@@ -87,4 +87,3 @@ def parse_line(line: str, year: int) -> Event | None:
         kind = "delivery"
         return Event(**common, kind=kind, queue_id=queue_id, fields=fields)
     return None
-
