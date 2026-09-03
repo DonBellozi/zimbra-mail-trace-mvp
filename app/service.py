@@ -88,7 +88,9 @@ def search(
     grouped: dict[tuple[str, str], dict] = {}
     for attempt, queue in rows:
         message_key = find(attempt.queue_id)
-        recipient_key = (attempt.original_recipient or attempt.recipient or "").lower()
+        # Group technical hops by the effective recipient. Preserve orig_to as
+        # route metadata instead of using it as a separate logical recipient.
+        recipient_key = (attempt.recipient or attempt.original_recipient or "").lower()
         key = (message_key, recipient_key)
         row = {
             "queue_id": attempt.queue_id, "message_id": queue.message_id if queue else None,
@@ -103,6 +105,8 @@ def search(
             grouped[key] = row
         elif not grouped[key].get("sender") and row.get("sender"):
             grouped[key]["sender"] = row["sender"]
+        if key in grouped and not grouped[key].get("original_recipient") and row.get("original_recipient"):
+            grouped[key]["original_recipient"] = row["original_recipient"]
     results = list(grouped.values())
 
     # "queued as" confirms only an internal hand-off. It is not a final result.
@@ -149,7 +153,7 @@ def trace(session: Session, queue_id: str) -> dict:
     attempts = session.execute(select(DeliveryAttempt).where(DeliveryAttempt.queue_id.in_(ids)).order_by(DeliveryAttempt.occurred_at)).scalars().all()
     recipients: dict[str, list[dict]] = defaultdict(list)
     for a in attempts:
-        recipients[a.recipient or "—"].append({"time": a.occurred_at.isoformat(), "status": human_status(a), "dsn": a.dsn, "reply": a.reply, "relay": a.relay})
+        recipients[a.recipient or "—"].append({"time": a.occurred_at.isoformat(), "status": human_status(a), "dsn": a.dsn, "reply": a.reply, "relay": a.relay, "original_recipient": a.original_recipient})
     return {
         "root_queue_id": queue_id, "queue_ids": sorted(ids),
         "message_ids": sorted({q.message_id for q in queues if q.message_id}),
